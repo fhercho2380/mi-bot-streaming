@@ -1,3 +1,2 @@
 pyTelegramBotAPI==4.22.0
 python-dotenv==1.0.0
-imaplib2==3.6
