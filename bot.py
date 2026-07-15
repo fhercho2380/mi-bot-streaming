@@ -39,7 +39,7 @@ def registrar_cliente(chat_id, nombre_usuario):
             "activo": False,
             "vip": False,
             "correo": "",
-            "enlaces": []  # Aquí se guardan los enlaces/cuentas asignadas
+            "enlaces": []
         }
         guardar_clientes(datos)
         return True
@@ -87,7 +87,7 @@ def vip(m):
             datos[idc]["vip"] = True
             guardar_clientes(datos)
             bot.send_message(m.chat.id, f"✅ Cliente {idc} marcado como VIP")
-            bot.send_message(int(idc), "⭐ ¡Tu cuenta es ahora VIP! Tienes acceso a todos tus enlaces.")
+            bot.send_message(int(idc), "⭐ ¡Tu cuenta es ahora VIP!")
     except:
         bot.send_message(m.chat.id, "⚠️ Formato: `/vip ID_DEL_CLIENTE`")
 
@@ -111,7 +111,6 @@ def asignar_correo(m):
     except:
         bot.send_message(m.chat.id, "⚠️ Formato: `/asignarcorreo ID correo@ejemplo.com`")
 
-# ✅ NUEVO: COMANDO PARA ASIGNAR ENLACES / CUENTAS
 @bot.message_handler(commands=['agregarenlace'])
 def agregar_enlace(m):
     if m.chat.id != ID_ADMIN: return
@@ -125,11 +124,9 @@ def agregar_enlace(m):
             datos[idc]["enlaces"].append(enlace)
             guardar_clientes(datos)
             bot.send_message(m.chat.id, f"✅ Enlace agregado al cliente {idc}")
-            bot.send_message(int(idc), "📥 Se te ha agregado un nuevo acceso. Usa /cuentas para verlo.")
-        else:
-            bot.send_message(m.chat.id, "❌ Cliente no encontrado")
+            bot.send_message(int(idc), "📥 Nuevo acceso agregado. Usa /cuentas para verlo.")
     except:
-        bot.send_message(m.chat.id, "⚠️ Formato: `/agregarenlace ID_DEL_CLIENTE Tu_enlace_o_datos_aqui`")
+        bot.send_message(m.chat.id, "⚠️ Formato: `/agregarenlace ID TU_DATO_AQUI`")
 
 @bot.message_handler(commands=['borrarenlaces'])
 def borrar_enlaces(m):
@@ -158,58 +155,43 @@ def bienvenida(m):
 🆔 Tu ID: `{chat_id}`
 
 ⚠️ Tu cuenta está pendiente de activación.
-En cuanto el administrador te dé de alta podrás usar todas las funciones.
 """, parse_mode="Markdown")
 
-        bot.send_message(ID_ADMIN, f"""📥 **NUEVO CLIENTE REGISTRADO**
-👤 Nombre: {nombre}
-🆔 ID: `{chat_id}`
-🔹 Usuario: @{usuario}
+        bot.send_message(ID_ADMIN, f"""📥 **NUEVO CLIENTE**
+👤 {nombre}
+🆔 `{chat_id}`
+@ {usuario}
 
-Comandos para administrarlo:
+Comandos:
 `/activar {chat_id}`
 `/asignarcorreo {chat_id} correo@ejemplo.com`
-`/agregarenlace {chat_id} TU_ENLACE_AQUI`
 """, parse_mode="Markdown")
     else:
         if cliente_esta_activo(chat_id):
-            bot.send_message(chat_id, f"""✅ Bienvenido de nuevo {nombre} 🟢
+            bot.send_message(chat_id, f"""✅ Bienvenido {nombre} 🟢
 
-**Comandos disponibles:**
-📂 `/cuentas` → Ver tus accesos y enlaces
+📂 `/cuentas` → Ver tus accesos
 🔑 `/micodigo` → Obtener código de verificación
 ℹ️ `/info` → Ver tus datos
-❓ `/ayuda` → ¿Cómo funciona?
 """, parse_mode="Markdown")
         else:
-            bot.send_message(chat_id, "⚠️ Tu cuenta está pendiente de activación.")
+            bot.send_message(chat_id, "⚠️ Cuenta pendiente de activación.")
 
-# ✅ NUEVO: COMANDO /CUENTAS PARA EL CLIENTE
 @bot.message_handler(commands=['cuentas'])
 def ver_cuentas(m):
     chat_id = m.chat.id
     if not cliente_esta_activo(chat_id):
-        bot.send_message(chat_id, "❌ Tu cuenta no está activada. No puedes ver tus accesos.")
+        bot.send_message(chat_id, "❌ Cuenta no activada.")
         return
-
     datos = cargar_clientes().get(str(chat_id), {})
     enlaces = datos.get("enlaces", [])
-
     if not enlaces:
-        bot.send_message(chat_id, """📂 **MIS CUENTAS**
-⚠️ Aún no tienes accesos asignados.
-Contacta al administrador para que te agregue.
-""", parse_mode="Markdown")
+        bot.send_message(chat_id, "📂 **MIS CUENTAS**\n⚠️ Aún no tienes accesos asignados.", parse_mode="Markdown")
         return
-
-    # Mostrar lista tal cual en la imagen
     texto = "📂 **MIS CUENTAS Y ACCESOS**\n\n"
     for i, item in enumerate(enlaces, 1):
         texto += f"🔹 {i}. {item}\n"
-
-    texto += "\n✅ Actualizado por el administrador"
-
-    bot.send_message(chat_id, texto, parse_mode="Markdown", disable_web_page_preview=False)
+    bot.send_message(chat_id, texto, parse_mode="Markdown")
 
 @bot.message_handler(commands=['micodigo'])
 def pedir_codigo(m):
@@ -222,77 +204,79 @@ def pedir_codigo(m):
         bot.send_message(m.chat.id, "⚠️ No tienes correo asignado.")
         return
     clientes_pendientes[correo.lower()] = m.chat.id
-    bot.send_message(m.chat.id, f"🔍 Buscando código para: `{correo}`...", parse_mode="Markdown")
+    bot.send_message(m.chat.id, "🔍 Buscando código... solo en el ASUNTO del correo... ⏳")
 
+# 🔎 FUNCIÓN: SOLO BUSCA EN EL ASUNTO
 def buscar_codigo_en_correo():
     try:
         servidor = imaplib.IMAP4_SSL(CORREO_PROVEEDOR)
         servidor.login(CORREO_USUARIO, CORREO_CONTRASENA)
         servidor.select("INBOX")
+
+        # Solo correos no leídos
         _, datos = servidor.search(None, 'UNSEEN')
-        ids = datos[0].split()
-        for idc in ids:
-            _, data = servidor.fetch(idc, "(RFC822)")
-            msg = email.message_from_bytes(data[0][1])
-            cuerpo = ""
-            if msg.is_multipart():
-                for p in msg.walk():
-                    if p.get_content_type() in ["text/plain", "text/html"]:
-                        try:
-                            cuerpo += p.get_payload(decode=True).decode(errors='ignore')
-                        except: pass
+        ids_correos = datos[0].split()
+
+        for id_correo in ids_correos:
+            # Solo pedimos el encabezado, no descargamos el cuerpo
+            _, datos_correo = servidor.fetch(id_correo, "(BODY[HEADER.FIELDS (SUBJECT FROM)])")
+            mensaje_correo = email.message_from_bytes(datos_correo[0][1])
+
+            # 📥 OBTENER SOLO EL ASUNTO
+            asunto_raw = decode_header(mensaje_correo["Subject"])[0][0]
+            if isinstance(asunto_raw, bytes):
+                asunto = asunto_raw.decode(errors="ignore")
             else:
-                cuerpo = msg.get_payload(decode=True).decode(errors='ignore')
-            codigos = re.findall(r"\b\d{4,6}\b", cuerpo)
-            correos = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", cuerpo)
-            if codigos and correos:
-                cod = codigos[0]
-                cor = correos[0].lower()
-                if cor in clientes_pendientes:
-                    chat = clientes_pendientes.pop(cor)
-                    if cliente_esta_activo(chat):
-                        bot.send_message(chat, f"🔑 **TU CÓDIGO ES: `{cod}`**", parse_mode="Markdown")
+                asunto = str(asunto_raw)
+
+            remitente = mensaje_correo["From"]
+
+            # ✅ SOLO BUSCAMOS EN EL ASUNTO
+            texto_a_buscar = f"{asunto} {remitente}"
+
+            # 🔍 Buscar códigos de 4 a 6 dígitos
+            codigos = re.findall(r"\b\d{4,6}\b", texto_a_buscar)
+            correos_encontrados = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", texto_a_buscar)
+
+            if codigos and correos_encontrados:
+                codigo = codigos[0]
+                correo_encontrado = correos_encontrados[0].lower()
+                if correo_encontrado in clientes_pendientes:
+                    chat_id = clientes_pendientes.pop(correo_encontrado)
+                    if cliente_esta_activo(chat_id):
+                        bot.send_message(chat_id, f"""🔑 **TU CÓDIGO ES: `{codigo}`**
+✅ Encontrado en el ASUNTO del correo
+📧 Correo: `{correo_encontrado}`
+""", parse_mode="Markdown")
+
         servidor.close()
         servidor.logout()
     except Exception as e:
-        print("Error en correo:", e)
+        print(f"❌ Error al revisar correo: {e}")
 
 @bot.message_handler(commands=['info'])
 def ver_info(m):
     d = cargar_clientes().get(str(m.chat.id), {})
     if not d:
-        bot.send_message(m.chat.id, "❌ No estás registrado.")
+        bot.send_message(m.chat.id, "❌ No registrado.")
         return
     estado = "🟢 ACTIVO" if d.get("activo") else "🔴 INACTIVO"
     tipo = "⭐ VIP" if d.get("vip") else "👤 Normal"
     bot.send_message(m.chat.id, f"""📋 **TUS DATOS**
 🆔 ID: `{m.chat.id}`
 📌 Estado: {estado}
-🏷️ Tipo: {tipo}
 📧 Correo: `{d.get("correo", "Sin asignar")}`
-🔢 Cantidad de accesos: {len(d.get("enlaces", []))}
-""", parse_mode="Markdown")
-
-@bot.message_handler(commands=['ayuda'])
-def ayuda(m):
-    bot.send_message(m.chat.id, """❓ **¿Cómo usar el bot?**
-
-1. Escribe `/start` para registrarte automáticamente
-2. Espera a que el administrador active tu cuenta
-3. Usa `/cuentas` para ver tus accesos
-4. Usa `/micodigo` cuando necesites el código de verificación
-
-Si tienes dudas, escribe al administrador.
+🔢 Accesos: {len(d.get("enlaces", []))}
 """, parse_mode="Markdown")
 
 # ------------------- INICIAR BOT -------------------
 if __name__ == "__main__":
-    print("✅ Bot completo iniciado")
+    print("✅ Bot iniciado: búsqueda ÚNICAMENTE en el ASUNTO activada")
     def revisar_correos():
         while True:
             if clientes_pendientes:
                 buscar_codigo_en_correo()
-            time.sleep(30)  # Revisa cada 30 segundos
+            time.sleep(30)
     import threading
     threading.Thread(target=revisar_correos, daemon=True).start()
     bot.infinity_polling()
