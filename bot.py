@@ -14,6 +14,14 @@ CORREO_USUARIO = os.getenv("CORREO_USUARIO")
 CORREO_CONTRASENA = os.getenv("CORREO_CONTRASENA")
 ID_ADMIN = int(os.getenv("ID_ADMIN"))
 
+# 👇 SOLO AQUÍ PONES TUS PALABRAS O FRASES EXACTAS
+PALABRAS_ASUNTO = [
+    "Tu código de inicio de sesión",
+    "TU PALABRA 2",
+    "TU PALABRA 3"
+    # Agrega más líneas si necesitas más
+]
+
 bot = telebot.TeleBot(TOKEN)
 ARCHIVO_CLIENTES = "clientes.json"
 clientes_pendientes = {}
@@ -173,6 +181,7 @@ Comandos:
 📂 `/cuentas` → Ver tus accesos
 🔑 `/micodigo` → Obtener código de verificación
 ℹ️ `/info` → Ver tus datos
+❓ `/ayuda` → ¿Cómo funciona?
 """, parse_mode="Markdown")
         else:
             bot.send_message(chat_id, "⚠️ Cuenta pendiente de activación.")
@@ -204,39 +213,36 @@ def pedir_codigo(m):
         bot.send_message(m.chat.id, "⚠️ No tienes correo asignado.")
         return
     clientes_pendientes[correo.lower()] = m.chat.id
-    bot.send_message(m.chat.id, "🔍 Buscando código... solo en el ASUNTO del correo... ⏳")
+    bot.send_message(m.chat.id, "🔍 Buscando código... solo en los asuntos que tú definiste... ⏳")
 
-# 🔎 FUNCIÓN: SOLO BUSCA EN EL ASUNTO
+# 🔎 FUNCIÓN: SOLO BUSCA EN LOS ASUNTOS QUE TÚ DIGAS
 def buscar_codigo_en_correo():
     try:
         servidor = imaplib.IMAP4_SSL(CORREO_PROVEEDOR)
         servidor.login(CORREO_USUARIO, CORREO_CONTRASENA)
         servidor.select("INBOX")
 
-        # Solo correos no leídos
         _, datos = servidor.search(None, 'UNSEEN')
         ids_correos = datos[0].split()
 
         for id_correo in ids_correos:
-            # Solo pedimos el encabezado, no descargamos el cuerpo
             _, datos_correo = servidor.fetch(id_correo, "(BODY[HEADER.FIELDS (SUBJECT FROM)])")
             mensaje_correo = email.message_from_bytes(datos_correo[0][1])
 
-            # 📥 OBTENER SOLO EL ASUNTO
             asunto_raw = decode_header(mensaje_correo["Subject"])[0][0]
             if isinstance(asunto_raw, bytes):
-                asunto = asunto_raw.decode(errors="ignore")
+                asunto = asunto_raw.decode(errors="ignore").lower().strip()
             else:
-                asunto = str(asunto_raw)
+                asunto = str(asunto_raw).lower().strip()
 
+            # ✅ SOLO CONTINÚA SI EL ASUNTO TIENE ALGUNA DE TUS PALABRAS
+            if not any(palabra.lower() in asunto for palabra in PALABRAS_ASUNTO):
+                continue
+
+            # 🔍 Busca solo códigos de 4 a 6 dígitos en el asunto
+            codigos = re.findall(r"\b\d{4,6}\b", asunto)
             remitente = mensaje_correo["From"]
-
-            # ✅ SOLO BUSCAMOS EN EL ASUNTO
-            texto_a_buscar = f"{asunto} {remitente}"
-
-            # 🔍 Buscar códigos de 4 a 6 dígitos
-            codigos = re.findall(r"\b\d{4,6}\b", texto_a_buscar)
-            correos_encontrados = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", texto_a_buscar)
+            correos_encontrados = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", remitente)
 
             if codigos and correos_encontrados:
                 codigo = codigos[0]
@@ -245,14 +251,14 @@ def buscar_codigo_en_correo():
                     chat_id = clientes_pendientes.pop(correo_encontrado)
                     if cliente_esta_activo(chat_id):
                         bot.send_message(chat_id, f"""🔑 **TU CÓDIGO ES: `{codigo}`**
-✅ Encontrado en el ASUNTO del correo
+✅ Encontrado en asunto: `{asunto}`
 📧 Correo: `{correo_encontrado}`
 """, parse_mode="Markdown")
 
         servidor.close()
         servidor.logout()
     except Exception as e:
-        print(f"❌ Error al revisar correo: {e}")
+        print(f"❌ Error: {e}")
 
 @bot.message_handler(commands=['info'])
 def ver_info(m):
@@ -269,9 +275,18 @@ def ver_info(m):
 🔢 Accesos: {len(d.get("enlaces", []))}
 """, parse_mode="Markdown")
 
+@bot.message_handler(commands=['ayuda'])
+def ayuda(m):
+    bot.send_message(m.chat.id, """❓ **¿Cómo funciona?**
+1. `/start` → Registrarse
+2. Esperar activación
+3. `/cuentas` → Ver accesos
+4. `/micodigo` → Buscar código solo en asuntos autorizados
+""", parse_mode="Markdown")
+
 # ------------------- INICIAR BOT -------------------
 if __name__ == "__main__":
-    print("✅ Bot iniciado: búsqueda ÚNICAMENTE en el ASUNTO activada")
+    print("✅ Bot listo: solo busca en los asuntos que tú definas")
     def revisar_correos():
         while True:
             if clientes_pendientes:
