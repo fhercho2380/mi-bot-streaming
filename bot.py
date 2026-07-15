@@ -3,7 +3,9 @@ import re
 import imaplib
 import email
 import time
+import json
 import telebot
+from telebot.types import ReplyKeyboardRemove
 from email.header import decode_header
 
 # ------------------- CONFIGURACIÓN -------------------
@@ -11,44 +13,185 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CORREO_PROVEEDOR = os.getenv("CORREO_PROVEEDOR", "imap.gmail.com")
 CORREO_USUARIO = os.getenv("CORREO_USUARIO")
 CORREO_CONTRASENA = os.getenv("CORREO_CONTRASENA")
-ID_ADMIN = os.getenv("ID_ADMIN")
+ID_ADMIN = int(os.getenv("ID_ADMIN"))  # Tu ID como administrador
 
 bot = telebot.TeleBot(TOKEN)
-clientes_pendientes = {}
 
-# ------------------- MENÚ PRINCIPAL -------------------
+# Archivo donde se guardarán los clientes
+ARCHIVO_CLIENTES = "clientes.json"
+
+# ------------------- FUNCIONES DE GESTIÓN DE CLIENTES -------------------
+def cargar_clientes():
+    try:
+        with open(ARCHIVO_CLIENTES, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def guardar_clientes(datos):
+    with open(ARCHIVO_CLIENTES, "w", encoding="utf-8") as f:
+        json.dump(datos, f, indent=4, ensure_ascii=False)
+
+def registrar_cliente(chat_id, nombre_usuario):
+    datos = cargar_clientes()
+    chat_id_str = str(chat_id)
+    if chat_id_str not in datos:
+        datos[chat_id_str] = {
+            "nombre": nombre_usuario,
+            "activo": False,
+            "vip": False,
+            "cuentas": 0,
+            "correo_asociado": ""
+        }
+        guardar_clientes(datos)
+        return True
+    return False
+
+def cliente_esta_activo(chat_id):
+    datos = cargar_clientes()
+    return datos.get(str(chat_id), {}).get("activo", False)
+
+# ------------------- MENÚ PRINCIPAL / REGISTRO -------------------
 @bot.message_handler(commands=['start'])
 def bienvenida(m):
-    bot.send_message(m.chat.id, """🎬 BOT DE STREAMING - SISTEMA COMPLETO
-✅ Funciona 24/7
-✅ Recibo tu correo y te entrego el código automáticamente
+    chat_id = m.chat.id
+    nombre = m.from_user.first_name or "Sin nombre"
+    usuario = m.from_user.username or "Sin usuario"
+    id_telegram = chat_id
 
-Comandos:
-/start - Volver al menú
-/micodigo - Obtener tu código de acceso
-/ayuda - Cómo funciona
-/info - Datos del sistema
+    es_nuevo = registrar_cliente(chat_id, nombre)
+
+    if es_nuevo:
+        bot.send_message(chat_id, f"""👋 ¡Hola {nombre}!
+✅ **Te has registrado correctamente**
+🆔 Tu ID de Telegram: `{id_telegram}`
+
+⚠️ Tu cuenta está pendiente de activación.
+Habla con tu distribuidor o administrador para que te dé de alta.
+""", parse_mode="Markdown")
+
+        # Avisar al administrador del nuevo registro
+        bot.send_message(ID_ADMIN, f"""📥 **NUEVO CLIENTE REGISTRADO**
+👤 Nombre: {nombre}
+🆔 ID: `{id_telegram}`
+🔑 Usuario: @{usuario}
+
+Para activarlo usa: `/activar {id_telegram}`
+Para hacerlo VIP: `/vip {id_telegram}`
+Para agregar cuentas: `/cuentas {id_telegram} 5`
+""", parse_mode="Markdown")
+
+    else:
+        if cliente_esta_activo(chat_id):
+            bot.send_message(chat_id, f"""✅ Bienvenido de nuevo {nombre}
+Tu cuenta está **ACTIVA** 🟢
+
+Comandos disponibles:
+/micodigo - Obtener tu código de verificación
+/info - Ver tus datos
+/ayuda - ¿Cómo funciona?
+""", parse_mode="Markdown")
+        else:
+            bot.send_message(chat_id, f"""⚠️ Hola {nombre}
+Tu registro ya existe, pero **aún no está activado**.
+Contacta con el administrador para que te dé de alta.
 """)
 
-# ------------------- PEDIR CORREO AL CLIENTE -------------------
+# ------------------- COMANDOS PARA EL ADMINISTRADOR -------------------
+@bot.message_handler(commands=['activar'])
+def activar_cliente(m):
+    if m.chat.id != ID_ADMIN:
+        return
+    try:
+        id_cliente = int(m.text.split()[1])
+        datos = cargar_clientes()
+        if str(id_cliente) in datos:
+            datos[str(id_cliente)]["activo"] = True
+            guardar_clientes(datos)
+            bot.send_message(m.chat.id, f"✅ Cliente `{id_cliente}` activado correctamente.")
+            bot.send_message(id_cliente, "🎉 ¡Tu cuenta ha sido activada! Ya puedes usar todos los comandos.")
+        else:
+            bot.send_message(m.chat.id, "❌ Ese ID no está registrado.")
+    except:
+        bot.send_message(m.chat.id, "⚠️ Formato incorrecto. Usa: `/activar ID_DEL_CLIENTE`")
+
+@bot.message_handler(commands=['vip'])
+def vip_cliente(m):
+    if m.chat.id != ID_ADMIN:
+        return
+    try:
+        id_cliente = int(m.text.split()[1])
+        datos = cargar_clientes()
+        if str(id_cliente) in datos:
+            datos[str(id_cliente)]["vip"] = True
+            guardar_clientes(datos)
+            bot.send_message(m.chat.id, f"✅ Cliente `{id_cliente}` marcado como VIP.")
+            bot.send_message(id_cliente, "⭐ ¡Tu cuenta ha sido actualizada a VIP!")
+        else:
+            bot.send_message(m.chat.id, "❌ Ese ID no está registrado.")
+    except:
+        bot.send_message(m.chat.id, "⚠️ Formato incorrecto. Usa: `/vip ID_DEL_CLIENTE`")
+
+@bot.message_handler(commands=['cuentas'])
+def agregar_cuentas(m):
+    if m.chat.id != ID_ADMIN:
+        return
+    try:
+        partes = m.text.split()
+        id_cliente = int(partes[1])
+        cantidad = int(partes[2])
+        datos = cargar_clientes()
+        if str(id_cliente) in datos:
+            datos[str(id_cliente)]["cuentas"] = cantidad
+            guardar_clientes(datos)
+            bot.send_message(m.chat.id, f"✅ Se asignaron {cantidad} cuentas al cliente `{id_cliente}`.")
+            bot.send_message(id_cliente, f"📋 Se te han asignado {cantidad} cuentas disponibles.")
+        else:
+            bot.send_message(m.chat.id, "❌ Ese ID no está registrado.")
+    except:
+        bot.send_message(m.chat.id, "⚠️ Formato incorrecto. Usa: `/cuentas ID_DEL_CLIENTE CANTIDAD`")
+
+# ------------------- COMANDO /INFO PARA VER DATOS -------------------
+@bot.message_handler(commands=['info'])
+def ver_info(m):
+    chat_id = m.chat.id
+    datos = cargar_clientes()
+    if str(chat_id) not in datos:
+        bot.send_message(chat_id, "❌ No estás registrado. Escribe /start primero.")
+        return
+    info = datos[str(chat_id)]
+    estado = "🟢 ACTIVO" if info["activo"] else "🔴 INACTIVO"
+    tipo = "⭐ VIP" if info["vip"] else "👤 Normal"
+    bot.send_message(chat_id, f"""📋 **TUS DATOS**
+🆔 ID: `{chat_id}`
+👤 Estado: {estado}
+🏷️ Tipo: {tipo}
+📦 Cuentas disponibles: {info["cuentas"]}
+""", parse_mode="Markdown")
+
+# ------------------- SISTEMA DE BÚSQUEDA DE CÓDIGOS -------------------
+clientes_pendientes = {}
+
 @bot.message_handler(commands=['micodigo'])
 def pedir_correo(m):
-    msg = bot.send_message(m.chat.id, "📧 Escribe el correo electrónico con el que te registraste en el servicio:")
+    if not cliente_esta_activo(m.chat.id):
+        bot.send_message(m.chat.id, "❌ Tu cuenta no está activada. No puedes usar esta función.")
+        return
+    msg = bot.send_message(m.chat.id, "📧 Escribe el correo electrónico asociado a tu cuenta:")
     bot.register_next_step_handler(msg, guardar_correo_cliente)
 
 def guardar_correo_cliente(m):
+    if not cliente_esta_activo(m.chat.id):
+        return
     correo_cliente = m.text.strip()
     if not re.match(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$", correo_cliente):
         bot.send_message(m.chat.id, "⚠️ Escribe un correo válido. Intenta de nuevo con /micodigo")
         return
-    
-    clientes_pendientes[correo_cliente] = m.chat.id
-    bot.send_message(m.chat.id, f"""✅ Correo guardado: {correo_cliente}
-🔍 Estoy buscando tu código... tardaré unos segundos.
-En cuanto lo encuentre te lo envío aquí mismo.
-""")
+    clientes_pendientes[correo_cliente.lower()] = m.chat.id
+    bot.send_message(m.chat.id, f"""✅ Correo guardado: `{correo_cliente}`
+🔍 Buscando tu código... esperá unos segundos.
+""", parse_mode="Markdown")
 
-# ------------------- BUSCAR CÓDIGO EN CORREOS (ADAPTADO A NETFLIX Y SIMILARES) -------------------
 def buscar_codigo_en_correo():
     try:
         servidor = imaplib.IMAP4_SSL(CORREO_PROVEEDOR)
@@ -62,17 +205,15 @@ def buscar_codigo_en_correo():
             _, datos_correo = servidor.fetch(id_correo, "(RFC822)")
             mensaje_correo = email.message_from_bytes(datos_correo[0][1])
 
-            # Leer asunto y remitente
             asunto = decode_header(mensaje_correo["Subject"])[0][0]
             if isinstance(asunto, bytes):
                 asunto = asunto.decode(errors='ignore')
             remitente = mensaje_correo["From"]
 
-            # Leer todo el cuerpo del correo
             cuerpo = ""
             if mensaje_correo.is_multipart():
                 for parte in mensaje_correo.walk():
-                    if parte.get_content_type() == "text/plain" or parte.get_content_type() == "text/html":
+                    if parte.get_content_type() in ["text/plain", "text/html"]:
                         try:
                             cuerpo += parte.get_payload(decode=True).decode(errors='ignore')
                         except:
@@ -80,58 +221,33 @@ def buscar_codigo_en_correo():
             else:
                 cuerpo = mensaje_correo.get_payload(decode=True).decode(errors='ignore')
 
-            # Buscar el correo del cliente en TODO el mensaje
             texto_completo = asunto + " " + remitente + " " + cuerpo
-            patron_correo = r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"
-            correos_encontrados = re.findall(patron_correo, texto_completo)
-
-            # Buscar códigos de 4 a 6 dígitos (como el de Netflix)
-            patron_codigo = r"\b\d{4,6}\b"
-            codigos = re.findall(patron_codigo, cuerpo)
+            correos_encontrados = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", texto_completo)
+            codigos = re.findall(r"\b\d{4,6}\b", cuerpo)
 
             if codigos and correos_encontrados:
                 codigo = codigos[0]
-                correo_destino = correos_encontrados[0].lower()
-
-                # Verificar si es un cliente esperando código
-                for correo_esperado, chat_id in list(clientes_pendientes.items()):
-                    if correo_destino == correo_esperado.lower():
-                        bot.send_message(chat_id, f"""🔑 TU CÓDIGO DE VERIFICACIÓN ES: **{codigo}**
-✅ Lo encontré en el correo asociado a {correo_esperado}
-Úsalo en la plataforma y listo.
+                correo_encontrado = correos_encontrados[0].lower()
+                if correo_encontrado in clientes_pendientes:
+                    chat_id = clientes_pendientes.pop(correo_encontrado)
+                    if cliente_esta_activo(chat_id):
+                        bot.send_message(chat_id, f"""🔑 **TU CÓDIGO ES: `{codigo}`**
+✅ Correo asociado: `{correo_encontrado}`
 """, parse_mode="Markdown")
-                        del clientes_pendientes[correo_esperado]
-                        print(f"✅ Código {codigo} enviado a {correo_esperado}")
-                        break
 
         servidor.close()
         servidor.logout()
     except Exception as e:
-        print(f"❌ Error revisando correo: {e}")
+        print(f"❌ Error al revisar correo: {e}")
 
-# ------------------- OTROS COMANDOS -------------------
-@bot.message_handler(commands=['ayuda'])
-def ayuda(m):
-    bot.send_message(m.chat.id, """📖 ¿Cómo obtengo mi código?
-1. Escribe /micodigo
-2. Envía el correo que usaste en el servicio
-3. Yo reviso el correo y te envío el código en segundos
-4. Funciona con Netflix, plataformas de streaming y más
-""")
-
-@bot.message_handler(commands=['info'])
-def info(m):
-    bot.send_message(m.chat.id, "⚙️ Sistema adaptado para códigos de 4-6 dígitos | Funciona con correos de verificación")
-
-# ------------------- ARRANCAR SISTEMA -------------------
+# ------------------- INICIAR BOT -------------------
 if __name__ == "__main__":
-    print("✅ SISTEMA ADAPTADO INICIADO - DETECTA CÓDIGOS DE NETFLIX Y SIMILARES")
-    def revisar_correos_periodicamente():
+    print("✅ Bot iniciado con sistema de registro y códigos")
+    def revisar_correos():
         while True:
             if clientes_pendientes:
                 buscar_codigo_en_correo()
             time.sleep(60)
     import threading
-    threading.Thread(target=revisar_correos_periodicamente, daemon=True).start()
-    
+    threading.Thread(target=revisar_correos, daemon=True).start()
     bot.infinity_polling()
